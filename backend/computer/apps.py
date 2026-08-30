@@ -71,6 +71,14 @@ def _tokens(text: str) -> set[str]:
 # --- kaynaklar -------------------------------------------------------------
 
 
+def _is_ignored(name: str) -> bool:
+    norm = normalise(name)
+    if "uninstall" in norm or "kaldir" in norm:
+        return True
+    tokens = {t for t in norm.split() if t and t not in _NOISE}
+    return bool(tokens & {"help", "yardim", "readme", "website", "documentation"})
+
+
 def _start_menu() -> list[App]:
     roots = [
         Path(os.environ.get("ProgramData", "")) / "Microsoft/Windows/Start Menu/Programs",
@@ -83,8 +91,7 @@ def _start_menu() -> list[App]:
         for path in root.rglob("*.lnk"):
             # Kaldırma ve yardım kısayolları uygulama değil; ajanın
             # "uninstall" açması istenen son şey.
-            if _tokens(path.stem) & {"uninstall", "kaldir", "help", "yardim",
-                                     "readme", "website", "documentation"}:
+            if _is_ignored(path.stem):
                 continue
             out.append(App(path.stem, "kisayol", str(path)))
     return out
@@ -107,8 +114,9 @@ def _app_paths() -> list[App]:
                         target = winreg.QueryValueEx(sub, "")[0]
                 except OSError:
                     continue
-                if target and os.path.exists(target):
-                    out.append(App(Path(name).stem, "exe", target))
+                stem = Path(name).stem
+                if target and os.path.exists(target) and not _is_ignored(stem):
+                    out.append(App(stem, "exe", target))
     return out
 
 

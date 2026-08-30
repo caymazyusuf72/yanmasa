@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import anthropic
+import openai
 
 from .. import config
 from ..computer.capture import ScreenCapture
@@ -24,6 +25,14 @@ from .akankod import AkanKod
 from .kayit import Kayit, oneri_notu, tekrar_bul
 from .dispatch import Dispatcher, ToolError, ToolOutcome
 from .prompts import build_system
+from .provider import (
+    AnthropicProvider,
+    BaseProvider,
+    ModelResponse,
+    OpenAIProvider,
+    TextBlock,
+    ToolUseBlock,
+)
 from .tools import CUSTOM_TOOLS
 
 COMPUTER_TOOLSET = "computer"
@@ -137,7 +146,8 @@ class Agent:
     displays: DisplayMap
     capture: ScreenCapture
     kill: KillSwitch
-    client: anthropic.Anthropic
+    client: Any = None
+    provider: BaseProvider | None = None
     approve: Callable[[str, str, str], bool] | None = None
     dispatcher: Dispatcher = field(init=False)
     messages: list[dict[str, Any]] = field(default_factory=list)
@@ -154,6 +164,16 @@ class Agent:
     _oturum_araclari: set[str] = field(default_factory=set, repr=False)
 
     def __post_init__(self) -> None:
+        if self.provider is None:
+            if isinstance(self.client, BaseProvider):
+                self.provider = self.client
+            elif isinstance(self.client, anthropic.Anthropic):
+                self.provider = AnthropicProvider(self.client)
+            elif isinstance(self.client, openai.OpenAI):
+                self.provider = OpenAIProvider(self.client)
+            elif self.client is not None:
+                self.provider = AnthropicProvider(self.client)
+
         self.dispatcher = Dispatcher(
             self.displays, self.capture, self.kill, approve=self.approve
         )
@@ -166,36 +186,47 @@ class Agent:
     @classmethod
     def create(cls, cfg: config.Config, displays: DisplayMap, capture: ScreenCapture,
                kill: KillSwitch, approve=None) -> Agent:
+        if cfg.llm_provider == "openai":
+            kwargs: dict[str, Any] = {}
+            if cfg.openai_api_key:
+                kwargs["api_key"] = cfg.openai_api_key
+            if cfg.openai_base_url:
+                kwargs["base_url"] = cfg.openai_base_url
+            openai_client = openai.OpenAI(**kwargs)
+            provider = OpenAIProvider(openai_client, model=cfg.openai_model)
+            return cls(
+                displays=displays,
+                capture=capture,
+                kill=kill,
+                client=openai_client,
+                provider=provider,
+                approve=approve,
+            )
+
+        anthropic_client = anthropic.Anthropic(api_key=cfg.anthropic_api_key)
+        provider = AnthropicProvider(anthropic_client, model=cfg.anthropic_model)
         return cls(
             displays=displays,
             capture=capture,
             kill=kill,
-            client=anthropic.Anthropic(api_key=cfg.anthropic_api_key),
+            client=anthropic_client,
+            provider=provider,
             approve=approve,
         )
 
     @property
     def tools(self) -> list[dict[str, Any]]:
-        """Araç listesi her model çağrısında yeniden kuruluyor.
-
-        Sabit bir liste, ajanın az önce yazdığı yeteneği aynı turda
-        çağırmasını imkânsız kılardı — yetenek ancak uygulama yeniden
-        başlatılınca görünürdü ve "yaz, hemen dene" döngüsü kapanmazdı.
-
-        Önbellek noktası **son statik aracın** üstünde, computer araç
-        setinin değil. Bir önbellek noktası kendisine kadar olan her şeyi
-        kapsıyor; nokta ilk sırada olduğunda arkasındaki 28 özel araç
-        (~3700 token) her istekte yeniden işleniyordu. Nokta sona alınınca
-        hepsi önbellekten geliyor, yetenekler ise ondan sonra kaldığı için
-        yeni yetenek yazmak önbelleği bozmuyor.
-        """
+        """Araç listesi her model çağrısında yeniden kuruluyor."""
+        skill_tools = self.dispatcher.skills.tools()
+        mcp_tools = self.dispatcher.mcp.tools()
+        if self.provider is not None:
+            return self.provider.tools(skill_tools, mcp_tools)
         static = [
             {"type": "computer_toolset_20260801"},
             *CUSTOM_TOOLS[:-1],
             {**CUSTOM_TOOLS[-1], "cache_control": {"type": "ephemeral"}},
         ]
-        return [*static, *self.dispatcher.skills.tools(),
-                *self.dispatcher.mcp.tools()]
+        return [*static, *skill_tools, *mcp_tools]
 
     def interject(self, text: str) -> None:
         """Ajan çalışırken araya bir cümle sıkıştırır.
@@ -371,63 +402,28 @@ class Agent:
 
     # --- model çağrısı ----------------------------------------------------
 
-    def _call_model(self, turn: Turn, effort: str = config.EFFORT):
-        """Modeli akışla çağırır ve tam mesajı döndürür.
-
-        Akış zorunlu: SDK, 10 dakikayı aşabilecek isteklerde bloke çağrıyı
-        reddediyor ve yüksek `max_tokens` bu eşiği tetikliyor. İşe yarıyor
-        da — metin ve düşünce özeti tur bitmeden görünüyor.
-        """
-        thinking_buffer: list[str] = []
-        akan = AkanKod()
-
-        with self.client.messages.stream(
-            model=config.MODEL,
-            max_tokens=config.MAX_TOKENS,
-            system=self._system_blocks(),
-            tools=self.tools,
+    def _call_model(self, turn: Turn, effort: str = config.EFFORT) -> ModelResponse:
+        """Modeli aktif sağlayıcı üzerinden akışla çağırır ve tam mesajı döndürür."""
+        system_text = build_system(
+            self.displays,
+            self.dispatcher.active_index,
+            self.dispatcher.kuru,
+        )
+        if self.provider is not None:
+            return self.provider.call_stream(
+                messages=self.messages,
+                system_text=system_text,
+                tools=self.tools,
+                turn=turn,
+                effort=effort,
+            )
+        return AnthropicProvider(self.client).call_stream(
             messages=self.messages,
-            thinking={"type": "adaptive", "display": "summarized"},
-            output_config={"effort": effort},
-        ) as stream:
-            # Nabız kısılıyor: saniyede yüzlerce parça geliyor ve her
-            # birini arayüze taşımak, çizilenden çok sinyal göndermek olurdu.
-            son_nabiz = 0.0
-            for event in stream:
-                if event.type == "content_block_start":
-                    blok = getattr(event, "content_block", None)
-                    if getattr(blok, "type", "") == "tool_use":
-                        akan.basla(getattr(blok, "name", ""))
-                elif event.type == "content_block_delta":
-                    delta = event.delta
-                    simdi = time.monotonic()
-                    if simdi - son_nabiz > PULSE_MIN_GAP:
-                        son_nabiz = simdi
-                        turn.on_pulse()
-                    if delta.type == "text_delta":
-                        turn.on_text(delta.text)
-                    elif delta.type == "thinking_delta":
-                        thinking_buffer.append(delta.thinking)
-                    elif delta.type == "input_json_delta":
-                        # Araç girdisi de akıyor. `write_file`'ın içeriği
-                        # buradan geçiyor ve arayüz onu yazılırken
-                        # gösterebiliyor; eskiden dosya araç çalıştıktan
-                        # sonra bir anda beliriyordu.
-                        if akan.besle(delta.partial_json):
-                            turn.on_kod(akan.arac, akan.yol, akan.metin,
-                                        False)
-                elif event.type == "content_block_stop":
-                    if akan.etkin:
-                        turn.on_kod(akan.arac, akan.yol, akan.metin, True)
-                        akan.dur()
-                    if thinking_buffer:
-                        # Düşünce parça parça geliyor; bloğu tamamlanınca
-                        # tek seferde bildiriyoruz, yoksa arayüz kelime
-                        # kelime titrer.
-                        turn.on_thinking("".join(thinking_buffer))
-                        thinking_buffer.clear()
-
-            return stream.get_final_message()
+            system_text=system_text,
+            tools=self.tools,
+            turn=turn,
+            effort=effort,
+        )
 
     def _system_blocks(self) -> list[dict[str, Any]]:
         """Sistem promptu önbelleğe alınabilir blok olarak.

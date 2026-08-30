@@ -21,7 +21,12 @@ EFFORT = "high"
 
 @dataclass
 class Config:
-    anthropic_api_key: str
+    anthropic_api_key: str = ""
+    llm_provider: str = "anthropic"  # "anthropic" | "openai"
+    anthropic_model: str = "claude-opus-5"
+    openai_api_key: str = ""
+    openai_base_url: str = ""
+    openai_model: str = "gpt-4o"
     elevenlabs_keys: list[str] = field(default_factory=list)
     elevenlabs_voice_id: str = ""
     elevenlabs_model: str = "eleven_flash_v2_5"
@@ -37,20 +42,66 @@ class Config:
     ssh_user: str = "root"
     ssh_port: int = 22
 
+    @property
+    def active_model(self) -> str:
+        """Kullanılan model adı."""
+        if self.llm_provider == "openai":
+            return self.openai_model
+        return self.anthropic_model
+
     @classmethod
     def load(cls) -> Config:
         load_dotenv(REPO_ROOT / ".env")
 
-        key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-        if not key:
+        anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+        openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
+        openai_base_url = os.environ.get("OPENAI_BASE_URL", "").strip()
+
+        provider = os.environ.get("LLM_PROVIDER", "").strip().lower()
+        if not provider:
+            if anthropic_key:
+                provider = "anthropic"
+            elif openai_key or openai_base_url:
+                provider = "openai"
+            else:
+                provider = "anthropic"
+
+        generic_model = os.environ.get("MODEL", "").strip()
+        anthropic_model = generic_model or os.environ.get(
+            "ANTHROPIC_MODEL", "claude-opus-5"
+        ).strip()
+        openai_model = generic_model or os.environ.get(
+            "OPENAI_MODEL", "gpt-4o"
+        ).strip()
+
+        if provider == "anthropic":
+            if not anthropic_key:
+                raise RuntimeError(
+                    "ANTHROPIC_API_KEY is missing. Copy `.env.example` to `.env` and "
+                    "fill it in, or set OPENAI_API_KEY / OPENAI_BASE_URL to use OpenAI."
+                )
+        elif provider == "openai":
+            if not openai_key and not openai_base_url:
+                raise RuntimeError(
+                    "OPENAI_API_KEY or OPENAI_BASE_URL is missing. Set OPENAI_API_KEY "
+                    "or OPENAI_BASE_URL in `.env`."
+                )
+            if not openai_key and openai_base_url:
+                # Yerel sunucularda (Ollama, LM Studio vb.) anahtar şart değil
+                openai_key = "dummy-key"
+        else:
             raise RuntimeError(
-                "ANTHROPIC_API_KEY is missing. Copy `.env.example` to `.env` and "
-                "fill it in, or set it as an environment variable."
+                f"Unknown LLM_PROVIDER: {provider!r}. Must be 'anthropic' or 'openai'."
             )
 
         raw_keys = os.environ.get("ELEVENLABS_KEYS", "")
         return cls(
-            anthropic_api_key=key,
+            anthropic_api_key=anthropic_key,
+            llm_provider=provider,
+            anthropic_model=anthropic_model,
+            openai_api_key=openai_key,
+            openai_base_url=openai_base_url,
+            openai_model=openai_model,
             elevenlabs_keys=[k.strip() for k in raw_keys.split(",") if k.strip()],
             elevenlabs_voice_id=os.environ.get("ELEVENLABS_VOICE_ID", "").strip(),
             elevenlabs_model=os.environ.get("ELEVENLABS_MODEL", "eleven_flash_v2_5"),

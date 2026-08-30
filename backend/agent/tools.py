@@ -881,3 +881,223 @@ CUSTOM_TOOLS: list[dict[str, Any]] = [
 ]
 
 CUSTOM_TOOL_NAMES = {tool["name"] for tool in CUSTOM_TOOLS}
+
+# --- OpenAI Uyumlu Modeller İçin Bilgisayar Araçları ---
+# Anthropic'in built-in `computer_toolset_20260801` aracını OpenAI modellerine
+# açık fonksiyon şemaları olarak sunuyoruz.
+
+COMPUTER_TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "screenshot",
+        "description": "Takes a screenshot of the active display.",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "zoom",
+        "description": "Takes a fresh screenshot and crops it to the specified region [x0, y0, x1, y1].",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "region": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "[x0, y0, x1, y1] pixel coordinates to crop",
+                }
+            },
+            "required": ["region"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "left_click",
+        "description": "Clicks the left mouse button at the given [x, y] coordinates on the active display.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "coordinate": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "[x, y] coordinates",
+                },
+                "text": {"type": "string", "description": "Optional modifier keys to hold (e.g. 'ctrl')"},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "right_click",
+        "description": "Right clicks at the given [x, y] coordinates.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "coordinate": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "[x, y] coordinates",
+                },
+                "text": {"type": "string", "description": "Optional modifier keys"},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "middle_click",
+        "description": "Middle clicks at the given [x, y] coordinates.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "coordinate": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "[x, y] coordinates",
+                },
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "double_click",
+        "description": "Double clicks at the given [x, y] coordinates.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "coordinate": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "[x, y] coordinates",
+                },
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "triple_click",
+        "description": "Triple clicks at the given [x, y] coordinates.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "coordinate": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "[x, y] coordinates",
+                },
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "mouse_move",
+        "description": "Moves the mouse cursor to [x, y] coordinates.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "coordinate": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "[x, y] coordinates",
+                }
+            },
+            "required": ["coordinate"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "left_mouse_down",
+        "description": "Presses and holds the left mouse button.",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "left_mouse_up",
+        "description": "Releases the left mouse button.",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "cursor_position",
+        "description": "Returns the current cursor coordinates and display index.",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "left_click_drag",
+        "description": "Drags from start_coordinate to coordinate while holding left mouse button.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "start_coordinate": {"type": "array", "items": {"type": "integer"}},
+                "coordinate": {"type": "array", "items": {"type": "integer"}},
+                "text": {"type": "string"},
+            },
+            "required": ["start_coordinate", "coordinate"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "scroll",
+        "description": "Scrolls the mouse wheel.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "scroll_direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
+                "scroll_amount": {"type": "integer", "description": "Number of scroll notches, default 3"},
+                "coordinate": {"type": "array", "items": {"type": "integer"}},
+                "text": {"type": "string"},
+            },
+            "required": ["scroll_direction"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "type",
+        "description": "Types the given text on the keyboard.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "The text to type"},
+            },
+            "required": ["text"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "key",
+        "description": "Presses a key or key combination (e.g. 'ctrl+a', 'Return', 'BackSpace', 'Escape').",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Key or key combination"},
+                "repeat": {"type": "integer", "description": "Number of times to repeat, default 1"},
+            },
+            "required": ["text"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "wait",
+        "description": "Pauses execution for the specified duration in seconds.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "duration": {"type": "number", "description": "Duration in seconds (0-300)"},
+            },
+            "required": ["duration"],
+            "additionalProperties": False,
+        },
+    },
+]
+
+
+def to_openai_tool(tool: dict[str, Any]) -> dict[str, Any]:
+    """Herhangi bir araç tanımını OpenAI Function Calling şemasına dönüştürür."""
+    if tool.get("type") == "function" and "function" in tool:
+        return tool
+    name = tool.get("name", "")
+    description = tool.get("description", "")
+    schema = tool.get("input_schema") or tool.get("parameters") or {"type": "object", "properties": {}}
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": schema,
+        },
+    }
+

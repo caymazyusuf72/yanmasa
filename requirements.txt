@@ -4,6 +4,7 @@ pillow==12.3.0
 
 # Ajan döngüsü
 anthropic==1.0.0
+openai>=1.50.0
 python-dotenv==1.1.1
 
 # MCP: dış sunucuların araçlarını ajana bağlayan istemci. Sunucular ayrı
